@@ -1,36 +1,83 @@
-name: Terraform Apply
-
+name: Terraform Diagnostics
 on:
   push:
     branches:
-      - main
-      - develop
+      - dev-test
+  workflow_dispatch:
+
+permissions:
+  contents: read
 
 jobs:
   terraform:
-    name: "Terraform Apply"
+    name: Terraform Diagnostics
     runs-on: ubuntu-latest
+
+    permissions:
+      id-token: write
+      contents: read
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
 
       - name: Setup Terraform
-        uses: hashicorp/setup-terraform@v2
+        uses: hashicorp/setup-terraform@v3
 
+      - name: Configure AWS Credentials via OIDC
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          aws-region: eu-west-2
+
+      - name: Verify AWS Identity
+        run: aws sts get-caller-identity
+
+      - name: Check S3 Bucket Region
+        run: |
+          aws s3api get-bucket-location \
+            --bucket terraform-state-code-file \
+            --region eu-west-2
+            
       - name: Terraform Init
-        run: terraform init
-        env:
-          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          TF_VAR_aws_access_key_id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          TF_VAR_aws_secret_access_key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        run: terraform init -reconfigure
+
+      - name: Terraform Validate
+        run: terraform validate
+
+      - name: Terraform Plan
+        run: terraform plan -input=false -out=tfplan
+
+      - name: Show Terraform Plan
+        run: terraform show -no-color tfplan
 
       - name: Terraform Apply
-        run: terraform apply -auto-approve
-        env:
-          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          TF_VAR_aws_access_key_id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          TF_VAR_aws_secret_access_key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          
+        run: terraform apply -input=false tfplan
+
+      - name: Verify Terraform State
+        run: terraform state list
+
+      - name: Verify Final Plan
+        run: terraform plan -input=false -no-color
+
+
+     # - name: Terraform Init
+     #   run: terraform init -reconfigure
+
+      #- name: Verify Terraform State
+      #  run: terraform state list
+
+      #- name: Terraform Validate
+     #   run: terraform validate
+
+     #- name: Verify Terraform State
+     #   run: terraform state list
+
+      #- name: Terraform Plan
+     #  run: terraform plan -no-color
+
+      #- name: Terraform Plan
+      #  run: terraform plan -input=false -out=tfplan
+
+#- name: Terraform Apply
+# run: terraform apply -input=false tfplan

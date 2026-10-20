@@ -1,0 +1,155 @@
+name: Terraform Import IAM Users
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: terraform-state-dev
+  cancel-in-progress: false
+
+jobs:
+  import:
+    name: Import Existing AWS Resources
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_wrapper: false
+
+      - name: Configure AWS Credentials via OIDC
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          aws-region: eu-west-2
+
+      - name: Verify AWS Identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          ACCOUNT=$(aws sts get-caller-identity \
+            --query Account --output text)
+          echo "AWS Account: $ACCOUNT"
+          test "$ACCOUNT" = "171119414396"
+
+      - name: Terraform Init
+        run: terraform init -reconfigure -input=false
+
+      - name: Verify Backend and Workspace
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          echo "===== WORKSPACE ====="
+          terraform workspace show
+
+          echo "===== BACKEND CONFIGURATION ====="
+          grep -A 10 'backend "s3"' ./*.tf || true
+
+          echo "===== TERRAFORM REGION ====="
+          echo 'var.aws_region' | terraform console
+
+          echo "===== CURRENT STATE ====="
+          terraform state list
+
+      - name: Confirm State Accessible
+        shell: bash
+        run: |
+          terraform state pull > /dev/null
+          echo "Terraform state is accessible."
+
+      - name: Import Julia
+        shell: bash
+        run: |
+          set -euo pipefail
+          ADDRESS='module.iam_users.aws_iam_user.new_users["iamuser-julia"]'
+
+          if terraform state list | grep -Fxq "$ADDRESS"; then
+            echo "Julia already tracked."
+          else
+            terraform import -input=false "$ADDRESS" iamuser-julia
+          fi
+
+      - name: Import Pablo
+        shell: bash
+        run: |
+          set -euo pipefail
+          ADDRESS='module.iam_users.aws_iam_user.new_users["iamuser-pablo"]'
+
+          if terraform state list | grep -Fxq "$ADDRESS"; then
+            echo "Pablo already tracked."
+          else
+            terraform import -input=false "$ADDRESS" iamuser-pablo
+          fi
+
+      - name: Verify S3 Import Prerequisites
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          echo "===== AWS ACCOUNT ====="
+          aws sts get-caller-identity
+
+          echo "===== TERRAFORM REGION ====="
+          echo 'var.aws_region' | terraform console
+
+          echo "===== S3 BUCKET REGION ====="
+          aws s3api get-bucket-location \
+            --bucket terraform-state-2527a9a1 \
+            --region eu-west-2
+
+          echo "===== S3 BUCKET ACCESS ====="
+          aws s3api head-bucket \
+            --bucket terraform-state-2527a9a1 \
+            --region eu-west-2
+
+          echo "===== S3 LIST ACCESS ====="
+          aws s3api list-objects-v2 \
+            --bucket terraform-state-2527a9a1 \
+            --region eu-west-2 \
+            --max-keys 1
+
+      - name: Import Existing S3 Lab Bucket
+        shell: bash
+        run: |
+          set -euo pipefail
+          ADDRESS='aws_s3_bucket.terraform_state'
+
+          if terraform state list | grep -Fxq "$ADDRESS"; then
+            echo "S3 bucket already tracked."
+          else
+            terraform import -input=false \
+              "$ADDRESS" terraform-state-2527a9a1
+          fi
+
+      - name: Verify Imported State
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          terraform state list
+
+          terraform state list | grep -Fxq \
+            'module.iam_users.aws_iam_user.new_users["iamuser-julia"]'
+
+          terraform state list | grep -Fxq \
+            'module.iam_users.aws_iam_user.new_users["iamuser-pablo"]'
+
+          terraform state list | grep -Fxq \
+            'aws_s3_bucket.terraform_state'
+
+          echo "All three existing resources are tracked."
+
+      - name: Terraform Validate
+        run: terraform validate
+
+      - name: Terraform Plan
+        run: terraform plan -input=false -no-color

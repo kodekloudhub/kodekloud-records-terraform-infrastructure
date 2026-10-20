@@ -5,10 +5,10 @@ terraform {
   # You'll need to run terraform init -reconfigure after first applying
   backend "s3" {
     key     = "global/terraform.tfstate"
-    region  = "us-east-1"
+    region  = "eu-west-2"
     encrypt = true
     # The bucket name will be set during terraform init with -backend-config
-    # bucket  = "unique-bucket-name-will-be-set-via-backend-config"
+    bucket  = "terraform-state-code-file"
   }
 }
 
